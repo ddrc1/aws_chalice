@@ -1,8 +1,9 @@
-from chalice import Blueprint
+from chalice import Blueprint, Response
+import chalicelib.credentials as credentials
 import boto3
 
 api = Blueprint(__name__)
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.resource('dynamodb', aws_access_key_id=credentials.aws_access_key_id, aws_secret_access_key=credentials.aws_secret_access_key)
 
 def get_or_create_table():
     try:
@@ -39,6 +40,7 @@ def post_users():
     req_obj = request.json_body
 
     response = table.put_item(Item=req_obj)
+
     return response
 
 
@@ -52,73 +54,35 @@ def get_users(username):
 
 @api.route('/list_users')
 def get_users():
-    response = table.scan()#(TableName='Users', IndexName='username')
+    response = table.scan()
     items = response['Items']
 
     return items
 
 
-# @api.route('/update_user/')
-# def update_users():
-#     request = api.current_request
-#     req_obj = request.json_body
+@api.route('/update_user', methods=['PUT'])
+def update_users():
+    request = api.current_request
+    req_obj = request.json_body
     
-#     response = table.get_item(Key={'username': username})
-#     item = response['Item']
+    username = req_obj['username']
+    update_dict = req_obj['update']
+    for key in update_dict.keys():
+        table.update_item(
+            Key={
+                'username': username
+            },
+            UpdateExpression=f'SET {key} = :val1',
+            ExpressionAttributeValues={
+                ':val1': update_dict[key]
+            }
+        )
 
-#     return item
-
-
-# @api.route('/users/', methods=['POST', 'GET', 'PUT', 'DELETE'])
-# def route_users():
-#     request = api.current_request
-
-#     if request.method == 'POST':
-#         req_obj = request.json_body
-
-#         response = table.put_item(Item=req_obj)
-#         return response
-
-#     elif request.method == 'PUT':
-#         req_obj = request.json_body
-#         username = req_obj['username']
-#         key = req_obj['key']
-#         value = req_obj['value']
-
-        # response = table.update_item(
-        #     Key={
-        #         'username': username
-        #     },
-        #     UpdateExpression=f'SET {key} = :val1',
-        #     ExpressionAttributeValues={
-        #         ':val1': value
-        #     }
-        # )
-
-#         return response
-#     elif request.method == 'GET':
-#         req_obj = request.json_body
-#         username = req_obj['username']
-
-#         response = table.get_item(
-#             Key={
-#                 'username': username
-#             }
-#         )
-#         item = response['Item']
-
-#         return item
-
-#     elif request.method == 'DELETE':
-#         req_obj = request.json_body
-#         username = req_obj['username']
-
-#         response = table.delete_item(
-#             Key={
-#                 'username': username
-#             }
-#         )
-
-#         return response
+    return Response(body={'status': 'OK', 'updated_keys': list(update_dict.keys())})
 
 
+@api.route('/delete/{username}', methods=['DELETE'])
+def update_users(username):
+    response = table.delete_item(Key={'username': username})
+
+    return response
