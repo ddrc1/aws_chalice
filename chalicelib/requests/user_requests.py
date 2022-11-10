@@ -35,7 +35,7 @@ def get_or_create_table():
 table = get_or_create_table()
 
 @api.route('/user', methods=['POST'])
-def post_users():
+def post_user():
     request = api.current_request
     req_obj = request.json_body
 
@@ -45,7 +45,7 @@ def post_users():
 
 
 @api.route('/user/{username}')
-def get_users(username):
+def get_user(username):
     response = table.get_item(Key={'username': username})
     item = response['Item']
 
@@ -61,7 +61,7 @@ def list_users():
 
 
 @api.route('/user', methods=['PUT'])
-def update_users():
+def update_user():
     request = api.current_request
     req_obj = request.json_body
     
@@ -82,7 +82,7 @@ def update_users():
 
 
 @api.route('/user/{username}', methods=['DELETE'])
-def delete_users(username):
+def delete_user(username):
     response = table.delete_item(Key={'username': username})
 
     return response

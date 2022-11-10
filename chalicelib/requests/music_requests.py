@@ -52,6 +52,7 @@ def post_musics():
 @api.route('/music/{music_id}')
 def get_music(music_id):
     response = table.get_item(Key={'ID': music_id})
+
     item = response['Item']
     return item
 
@@ -87,6 +88,7 @@ def update_music():
 
 @api.route('/music/{music_id}', methods=['DELETE'])
 def delete_music(music_id):
+    
     response = table.delete_item(Key={'ID': music_id})
 
     return response
