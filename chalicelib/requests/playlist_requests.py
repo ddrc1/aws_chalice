@@ -1,159 +1,108 @@
 from chalice import Blueprint, Response
 import boto3
+from uuid import uuid4
 import chalicelib.credentials as credentials
 from chalicelib.requests.music_requests import get_music
+import chalicelib.connections.playlist_table as playlist_table
 from chalicelib.requests.user_requests import get_user
+import chalicelib.connections.sns as sns
+
 
 api = Blueprint(__name__)
-dynamodb = boto3.resource('dynamodb', aws_access_key_id=credentials.aws_access_key_id, aws_secret_access_key=credentials.aws_secret_access_key)
-sns = boto3.client('sns', aws_access_key_id=credentials.aws_access_key_id, aws_secret_access_key=credentials.aws_secret_access_key)
 
-def send_message(playlist: dict, music: dict, keyword="adicionada"):
-    message = f"A música {music['music_name']} do artista {music['artist']} acabou de ser {keyword} na playlist {playlist['playlist_name']}"
-    response = sns.publish(TopicArn="arn:aws:sns:us-east-1:952799814065:test", Message=message)
-    print(message)
-    return response
-    
+@api.route('/users/{username}/playlists/{playlist_id}')
+def get_playlist_by_user(username, playlist_id):
+    table = playlist_table.get_or_create_table()
 
-def subscription(playlist: dict, user: dict):
-    response = sns.subscribe(TopicArn=playlist['topicArn'], Protocol='email', Endpoint=user['email'], ReturnSubscriptionArn=True)
-    return response
+    response = table.get_item(Key={'playlist_id': playlist_id})
+    if "Item" in response.keys():
+        return response["Item"]
+    else:
+        return {}
 
 
-def create_topic(name: str):
-    response = sns.create_topic(Name=name)
-    topicArn = response['TopicArn']
-    print("Topic created:", topicArn)
-    return topicArn
+@api.route('/users/{username}/playlists')
+def list_playlist_by_user(username):
+    table = playlist_table.get_or_create_table()
+
+    response = table.scan()
+    if "Items" in response.keys():
+        playlists = response["Items"]
+        playlists = [p for p in playlists if p['owner'] == username]
+        return playlists
+    else:
+        return []
 
 
-def get_or_create_table():
-    try:
-        table = dynamodb.create_table(
-            TableName='Playlists',
-            KeySchema=[{
-                        'AttributeName': 'playlist_name',
-                        'KeyType': 'HASH'
-                    }],
-            AttributeDefinitions=[
-                {
-                    'AttributeName': 'playlist_name',
-                    'AttributeType': 'S'
-                }
-            ],
-            ProvisionedThroughput={
-                'ReadCapacityUnits': 5,
-                'WriteCapacityUnits': 5
-            }
-        )
-        print('Creating table')
-        table.wait_until_exists()
+@api.route('/users/{username}/playlists', methods=['POST'])
+def create_playlists(username):
 
-    except Exception:
-        table = dynamodb.Table('Playlists')
+    table = playlist_table.get_or_create_table()
 
-    return table
-
-table = get_or_create_table()
-
-
-@api.route('/playlist', methods=['POST'])
-def post_musics():
     request = api.current_request
     req_obj = request.json_body
 
-    topicArn = create_topic(req_obj['playlist_name'])
-    req_obj['topicArn'] = topicArn
+    uuid = str(uuid4())
+    req_obj['playlist_id'] = uuid
 
+    topicArn = sns.create_topic(uuid)
+    req_obj['owner'] = username
+    req_obj['topicArn'] = topicArn
     req_obj['musics'] = []
+    req_obj['users'] = []
+    print(req_obj)
 
     response = table.put_item(Item=req_obj)
 
     return response
 
 
-@api.route('/playlist/{playlist_name}')
-def get_playlist(playlist_name):
-    response = table.get_item(Key={'playlist_name': playlist_name})
-    item = response['Item']
-    return item
-
-
-@api.route('/list_playlist')
-def list_playlist():
-    response = table.scan()
-    items = response['Items']
-
-    return items
-
-
-@api.route('/playlist', methods=['PUT'])
-def update_music():
-    request = api.current_request
-    req_obj = request.json_body
-    
-    playlist_name = req_obj['playlist_name']
-    update_dict = req_obj['update']
-    for key in update_dict.keys():
-        if key == "add" or key == "remove":
-            playlist = get_playlist(playlist_name)
-            music = get_music(update_dict[key])
-
-            if key == "add" and music not in playlist['musics']:
-                table.update_item(
-                    Key={
-                        'playlist_name': playlist_name
-                    },
-                    UpdateExpression=f'SET musics = list_append(musics, :val1)',
-                    ExpressionAttributeValues={
-                        ':val1': [update_dict[key]]
-                    }
-                )
-
-                send_message(playlist, music, keyword="adicionada")
-            elif key == "remove" and music in playlist['musics']:
-                playlist = get_playlist(playlist_id)
-                musics = playlist['musics']
-                index = musics.index()
-                del musics[index]
-
-                table.update_item(
-                    Key={
-                        'ID': playlist_id
-                    },
-                    UpdateExpression=f'SET musics = :val1',
-                    ExpressionAttributeValues={
-                        ':val1': musics
-                    }
-                )
-
-                send_message(playlist, music, keyword="removida")
-        else:
-            table.update_item(
-                Key={
-                    'ID': playlist_id
-                },
-                UpdateExpression=f'SET {key} = :val1',
-                ExpressionAttributeValues={
-                    ':val1': update_dict[key]
-                }
-            )
-
-    return Response(body={'status': 'OK', 'updated_keys': list(update_dict.keys())})
-
-
-@api.route('/playlist/{playlist_name}', methods=['DELETE'])
-def delete_playlist(playlist_name):
-    response = table.delete_item(Key={'playlist_name': playlist_name})
-
-    return response
-
-
-@api.route('/playlist/subscribe/{playlist_name}/{username}', methods=['GET'])
-def subscribe_playlist(playlist_name, username):
-    playlist = get_playlist(playlist_name)
+@api.route('/users/{username}/playlists/{playlist_id}', methods=['PUT'])
+def add_music_playlist(username, playlist_id):
+    playlist = get_playlist_by_user(username, playlist_id)
     user = get_user(username)
 
-    response = subscription(playlist, user)
+    if playlist is not {} and user is not {}:
+        table = playlist_table.get_or_create_table()
 
-    return response
+        request = api.current_request
+        req_obj = request.json_body
+
+        music_id = req_obj["music_id"]
+        music = get_music(music_id)
+        
+
+        table.update_item(
+            Key={
+                'playlist_id': playlist["playlist_id"]
+            },
+            UpdateExpression=f'SET musics = list_append(musics, :val1)',
+            ExpressionAttributeValues={
+                ':val1': [music_id]
+            }
+        )
+        sns.send_message(playlist, music)
+        return Response(body={'status': 'OK'})
+
+    else:
+        Response(body={'status': 'ERROR'})
+
+
+@api.route('/users/{username}/playlists/{playlist_id}/subscribe', methods=['POST'])
+def subscribe_on_playlist(username, playlist_id):
+    playlist = get_playlist_by_user(username, playlist_id)
+    user = get_user(username)
+
+    if playlist is not {} and user is not {}:
+        table = playlist_table.get_or_create_table()
+
+        request = api.current_request
+        req_obj = request.json_body
+
+        subscribed_user_id = req_obj["user_id"]
+        subscribed_user = get_user(subscribed_user_id)
+
+        response = sns.subscription(playlist, user)
+        return response
+    else:
+        Response(body={'status': 'ERROR'})

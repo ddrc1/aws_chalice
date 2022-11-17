@@ -1,69 +1,54 @@
 from chalice import Blueprint, Response
 import chalicelib.credentials as credentials
 import boto3
+from uuid import uuid4
+import chalicelib.connections.user_table as user_table
+import chalicelib.connections.music_table as music_table
+import chalicelib.connections.sns as sns
+
 
 api = Blueprint(__name__)
-dynamodb = boto3.resource('dynamodb', aws_access_key_id=credentials.aws_access_key_id, aws_secret_access_key=credentials.aws_secret_access_key)
 
-def get_or_create_table():
-    try:
-        table = dynamodb.create_table(
-            TableName='Users',
-            KeySchema=[{
-                        'AttributeName': 'username',
-                        'KeyType': 'HASH'
-                    }],
-            AttributeDefinitions=[
-                {
-                    'AttributeName': 'username',
-                    'AttributeType': 'S'
-                }
-            ],
-            ProvisionedThroughput={
-                'ReadCapacityUnits': 5,
-                'WriteCapacityUnits': 5
-            }
-        )
-        print('Creating table')
-        table.wait_until_exists()
 
-    except Exception:
-        table = dynamodb.Table('Users')
-
-    return table
-
-table = get_or_create_table()
-
-@api.route('/user', methods=['POST'])
+@api.route('/users', methods=['POST'])
 def post_user():
     request = api.current_request
     req_obj = request.json_body
 
+    table = user_table.get_or_create_table()
     response = table.put_item(Item=req_obj)
 
     return response
 
 
-@api.route('/user/{username}')
+@api.route('/users/{username}')
 def get_user(username):
+    table = user_table.get_or_create_table()
+
     response = table.get_item(Key={'username': username})
-    item = response['Item']
+    
+    if "Item" in response.keys():
+        return response["Item"]
+    else:
+        return {}
 
-    return item
 
-
-@api.route('/list_user')
+@api.route('/users')
 def list_users():
+    table = user_table.get_or_create_table()
+
     response = table.scan()
     items = response['Items']
 
     return items
 
 
-@api.route('/user', methods=['PUT'])
+@api.route('/users', methods=['PUT'])
 def update_user():
     request = api.current_request
     req_obj = request.json_body
+
+    table = user_table.get_or_create_table()
     
     username = req_obj['username']
     update_dict = req_obj['update']
@@ -81,8 +66,9 @@ def update_user():
     return Response(body={'status': 'OK', 'updated_keys': list(update_dict.keys())})
 
 
-@api.route('/user/{username}', methods=['DELETE'])
+@api.route('/users/{username}', methods=['DELETE'])
 def delete_user(username):
+    table = user_table.get_or_create_table()
     response = table.delete_item(Key={'username': username})
 
     return response
